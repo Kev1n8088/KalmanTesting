@@ -24,18 +24,15 @@ float oldGyroBias[3] = {0, 0, 0};
 
 float gyroMeasurement[3] = {0, 0, 0};
 float filteredGyro[3] = {0, 0, 0};
-float orientationQuanternion[4] = {1, 0, 0, 0};
+float orientationQuaternion[4] = {1, 0, 0, 0};
 
 float baroMeaurement = 0; // baro measurement in meters adjusted by sealevel HPA
 
 float accelMeasurement[3] = {0, 0, 0};
-float oldGravQuaternion[4] = {0, 0, 0, 0};
-float gravQuaternion[4] = {0, 0, 0, 0};
-float accelQuaternion[4] = {0, 0, 0, 0};
 
-float orientationTimesAccel[4] = {0, 0, 0, 0};
-float conjugateOrientationQuanternion[4] = {0, 0, 0, 0};
-float worldQuanternion[4] = {0, 0, 0, 0};
+float initialOrientation[4] = {0, 0, 0, 0};
+
+// float accelQuaternion[4] = {0, 0, 0, 0};
 
 // put function declarations here:
 
@@ -74,7 +71,7 @@ void gryoFilter()
   filteredGyro[2] = gyroMeasurement[2] - oldGyroBias[2];
 }
 
-void gyroQuanternion(float dt)
+void gyroQuaternion(float dt)
 {
   float dq[4] = {0, 0, 0, 0};
   float v[3] = {0, 0, 0};
@@ -94,10 +91,16 @@ void gyroQuanternion(float dt)
   dq[2] = sin(0.5 * theta) * v[1];
   dq[3] = sin(0.5 * theta) * v[2];
 
-  orientationQuanternion[0] = orientationQuanternion[0] * dq[0] - orientationQuanternion[1] * dq[1] - orientationQuanternion[2] * dq[2] - orientationQuanternion[3] * dq[3];
-  orientationQuanternion[1] = orientationQuanternion[0] * dq[1] + orientationQuanternion[1] * dq[0] + orientationQuanternion[2] * dq[3] - orientationQuanternion[3] * dq[2];
-  orientationQuanternion[2] = orientationQuanternion[0] * dq[2] - orientationQuanternion[1] * dq[3] + orientationQuanternion[2] * dq[0] + orientationQuanternion[3] * dq[1];
-  orientationQuanternion[3] = orientationQuanternion[0] * dq[3] + orientationQuanternion[1] * dq[2] - orientationQuanternion[2] * dq[1] + orientationQuanternion[3] * dq[0];
+  orientationQuaternion[0] = orientationQuaternion[0] * dq[0] - orientationQuaternion[1] * dq[1] - orientationQuaternion[2] * dq[2] - orientationQuaternion[3] * dq[3];
+  orientationQuaternion[1] = orientationQuaternion[0] * dq[1] + orientationQuaternion[1] * dq[0] + orientationQuaternion[2] * dq[3] - orientationQuaternion[3] * dq[2];
+  orientationQuaternion[2] = orientationQuaternion[0] * dq[2] - orientationQuaternion[1] * dq[3] + orientationQuaternion[2] * dq[0] + orientationQuaternion[3] * dq[1];
+  orientationQuaternion[3] = orientationQuaternion[0] * dq[3] + orientationQuaternion[1] * dq[2] - orientationQuaternion[2] * dq[1] + orientationQuaternion[3] * dq[0];
+
+  float mag = sqrt(orientationQuaternion[0] * orientationQuaternion[0] + orientationQuaternion[1] * orientationQuaternion[1] + orientationQuaternion[2] * orientationQuaternion[2] + orientationQuaternion[3] * orientationQuaternion[3]);
+  for (int i = 0; i < 4; i++)
+  {
+    orientationQuaternion[i] = orientationQuaternion[i] / mag;
+  }
 }
 
 void getBaro()
@@ -105,68 +108,44 @@ void getBaro()
   baroMeaurement = bmp.readAltitude(SEALEVELPRESSURE_HPA);
 }
 
-void getAccelQuaternion()
+void updateInitialOrientation()
 {
-  if (IMU.getSensorEventID() == SENSOR_REPORTID_ACCELEROMETER)
+  // USE ONLY BEFORE LAUNCH! This function is only accurate when the rocket is on the ground. It sets the initial orientation of the rocket.
+  for (int i = 0; i < 4; i++)
   {
-    accelMeasurement[0] = IMU.getAccelX();
-    accelMeasurement[1] = IMU.getAccelY();
-    accelMeasurement[2] = IMU.getAccelZ();
+    orientationQuaternion[i] = initialOrientation[i];
+  }
 
-    float cy = cos(accelMeasurement[2] * 0.5);
-    float sy = sin(accelMeasurement[2] * 0.5);
-    float cp = cos(accelMeasurement[1] * 0.5);
-    float sp = sin(accelMeasurement[1] * 0.5);
-    float cr = cos(accelMeasurement[0] * 0.5);
-    float sr = sin(accelMeasurement[0] * 0.5);
-
-    accelQuaternion[0] = cr * cp * cy + sr * sp * sy;
-    accelQuaternion[1] = sr * cp * cy - cr * sp * sy;
-    accelQuaternion[2] = cr * sp * cy + sr * cp * sy;
-    accelQuaternion[3] = cr * cp * sy - sr * sp * cy;
+  if (IMU.getSensorEventID() == SENSOR_REPORTID_ROTATION_VECTOR)
+  {
+    initialOrientation[0] = IMU.getQuatReal();
+    initialOrientation[1] = IMU.getQuatI();
+    initialOrientation[2] = IMU.getQuatJ();
+    initialOrientation[3] = IMU.getQuatK();
   }
 }
 
-void updateGravityQuaternion()
-{
+// void getAccelQuaternion()
+// {
+//   if (IMU.getSensorEventID() == SENSOR_REPORTID_ACCELEROMETER)
+//   {
+//     accelMeasurement[0] = IMU.getAccelX();
+//     accelMeasurement[1] = IMU.getAccelY();
+//     accelMeasurement[2] = IMU.getAccelZ();
 
-  if (IMU.getSensorEventID() == SENSOR_REPORTID_GRAVITY)
-  {
-    for (int i = 0; i < 4; i++)
-    {
-      oldGravQuaternion[i] = gravQuaternion[i];
-    }
-    gravQuaternion[0] = 0;
-    gravQuaternion[1] = IMU.getGravityX();
-    gravQuaternion[2] = IMU.getGravityY();
-    gravQuaternion[3] = IMU.getGravityZ();
+//     float cy = cos(accelMeasurement[2] * 0.5);
+//     float sy = sin(accelMeasurement[2] * 0.5);
+//     float cp = cos(accelMeasurement[1] * 0.5);
+//     float sp = sin(accelMeasurement[1] * 0.5);
+//     float cr = cos(accelMeasurement[0] * 0.5);
+//     float sr = sin(accelMeasurement[0] * 0.5);
 
-    float mag = sqrt(gravQuaternion[1] * gravQuaternion[1] + gravQuaternion[2] * gravQuaternion[2] + gravQuaternion[3] * gravQuaternion[3]);
-    for (int i = 0; i < 4; i++)
-    {
-      gravQuaternion[i] = gravQuaternion[i] / mag;
-    }
-  }
-}
-
-void getWorldQuanternion()
-{
-  // get the world quanternion from the accelQuanternion and the gyroQuanternion
-  orientationTimesAccel[0] = orientationQuanternion[0] * oldGravQuaternion[0] - orientationQuanternion[1] * oldGravQuaternion[1] - orientationQuanternion[2] * oldGravQuaternion[2] - orientationQuanternion[3] * oldGravQuaternion[3];
-  orientationTimesAccel[1] = orientationQuanternion[0] * oldGravQuaternion[1] + orientationQuanternion[1] * oldGravQuaternion[0] + orientationQuanternion[2] * oldGravQuaternion[3] - orientationQuanternion[3] * oldGravQuaternion[2];
-  orientationTimesAccel[2] = orientationQuanternion[0] * oldGravQuaternion[2] - orientationQuanternion[1] * oldGravQuaternion[3] + orientationQuanternion[2] * oldGravQuaternion[0] + orientationQuanternion[3] * oldGravQuaternion[1];
-  orientationTimesAccel[3] = orientationQuanternion[0] * oldGravQuaternion[3] + orientationQuanternion[1] * oldGravQuaternion[2] - orientationQuanternion[2] * oldGravQuaternion[1] + orientationQuanternion[3] * oldGravQuaternion[0];
-
-  conjugateOrientationQuanternion[0] = orientationQuanternion[0];
-  conjugateOrientationQuanternion[1] = -orientationQuanternion[1];
-  conjugateOrientationQuanternion[2] = -orientationQuanternion[2];
-  conjugateOrientationQuanternion[3] = -orientationQuanternion[3];
-
-  worldQuanternion[0] = orientationTimesAccel[0] * conjugateOrientationQuanternion[0] - orientationTimesAccel[1] * conjugateOrientationQuanternion[1] - orientationTimesAccel[2] * conjugateOrientationQuanternion[2] - orientationTimesAccel[3] * conjugateOrientationQuanternion[3];
-  worldQuanternion[1] = orientationTimesAccel[0] * conjugateOrientationQuanternion[1] + orientationTimesAccel[1] * conjugateOrientationQuanternion[0] + orientationTimesAccel[2] * conjugateOrientationQuanternion[3] - orientationTimesAccel[3] * conjugateOrientationQuanternion[2];
-  worldQuanternion[2] = orientationTimesAccel[0] * conjugateOrientationQuanternion[2] - orientationTimesAccel[1] * conjugateOrientationQuanternion[3] + orientationTimesAccel[2] * conjugateOrientationQuanternion[0] + orientationTimesAccel[3] * conjugateOrientationQuanternion[1];
-  worldQuanternion[3] = orientationTimesAccel[0] * conjugateOrientationQuanternion[3] + orientationTimesAccel[1] * conjugateOrientationQuanternion[2] - orientationTimesAccel[2] * conjugateOrientationQuanternion[1] + orientationTimesAccel[3] * conjugateOrientationQuanternion[0];
-}
+//     accelQuaternion[0] = cr * cp * cy + sr * sp * sy;
+//     accelQuaternion[1] = sr * cp * cy - cr * sp * sy;
+//     accelQuaternion[2] = cr * sp * cy + sr * cp * sy;
+//     accelQuaternion[3] = cr * cp * sy - sr * sp * cy;
+//   }
+// }
 
 unsigned long oldtime;
 unsigned long newtime;
@@ -191,46 +170,36 @@ void setReports()
   {
     Serial.println("Could not enable accelerometer");
   }
-  if (IMU.enableGravity() == true)
+  if (IMU.enableRotationVector() == true)
   {
-    Serial.println(F("Gravity enabled"));
-    Serial.println(F("Output in form x, y, z, accuracy"));
+    Serial.println(F("Rotation vector enabled"));
+    Serial.println(F("Output in form i, j, k, real, accuracy"));
   }
   else
   {
-    Serial.println("Could not enable gravity");
+    Serial.println("Could not enable rotation vector");
   }
+  // if (IMU.enableGravity() == true)
+  // {
+  //   Serial.println(F("Gravity enabled"));
+  //   Serial.println(F("Output in form x, y, z, accuracy"));
+  // }
+  // else
+  // {
+  //   Serial.println("Could not enable gravity");
+  // }
 }
 
 void printData()
 {
-  // Serial.print("Quaternion: ");
-  // Serial.print(orientationQuanternion[0]);
-  // Serial.print(", ");
-  // Serial.print(orientationQuanternion[1]);
-  // Serial.print(", ");
-  // Serial.print(orientationQuanternion[2]);
-  // Serial.print(", ");
-  // Serial.println(orientationQuanternion[3]);
-  /*printTime = millis();*/
-
-  // Serial.print("W: ");
-  // Serial.print(oldGravQuaternion[0]);
-  // Serial.print(" X: ");
-  // Serial.print(oldGravQuaternion[1]);
-  // Serial.print(" Y: ");
-  // Serial.print(oldGravQuaternion[2]);
-  // Serial.print(" Z: ");
-  // Serial.println(oldGravQuaternion[3]);
-
   Serial.print("Quaternion: ");
-  Serial.print(worldQuanternion[0]);
+  Serial.print(orientationQuaternion[0]);
   Serial.print(", ");
-  Serial.print(worldQuanternion[1]);
+  Serial.print(orientationQuaternion[1]);
   Serial.print(", ");
-  Serial.print(worldQuanternion[2]);
+  Serial.print(orientationQuaternion[2]);
   Serial.print(", ");
-  Serial.println(worldQuanternion[3]);
+  Serial.println(orientationQuaternion[3]);
 }
 
 void printAccelData()
@@ -268,33 +237,12 @@ void setup()
   bmp.setOutputDataRate(BMP3_ODR_50_HZ);*/
 
   setReports();
-  // while (IMU.getSensorEvent() == false)
-  // {
-  //   delay(5);
-  // }
-  // while (!IMU.getSensorEventID() == SENSOR_REPORTID_GRAVITY)
-  // {
-  //   Serial.println("awaiting gravity");
-  //   delay(5);
-  // }
-  // updateGravityQuaternion();
-  // delay(5000);
-  // while (IMU.getSensorEvent() == false)
-  // {
-  //   delay(5);
-  // }
-  // while (!IMU.getSensorEventID() == SENSOR_REPORTID_GRAVITY)
-  // {
-  //   delay(5);
-  // }
-  // updateGravityQuaternion();
-  // printData();
 
   for (int i = 0; i < 1000; i++)
   {
     if (IMU.getSensorEvent() == true)
     {
-      updateGravityQuaternion();
+      updateInitialOrientation();
     }
   }
   oldtime = micros();
@@ -310,10 +258,9 @@ void loop()
     newtime = micros();
     dt = newtime - oldtime;
     // gyroEuler(dt / 1000000);
-    gyroQuanternion(dt / 1000000);
+    gyroQuaternion(dt / 1000000);
     oldtime = newtime;
     // updateGravityQuaternion();
-    getWorldQuanternion();
   }
 
   if (millis() - printTime > 100)
