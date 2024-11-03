@@ -11,6 +11,7 @@ using namespace BLA;
 
 #define BNO08X_INT -1
 #define BNO08X_RST -1
+// not using SPI so both pins are set to -1
 
 // #define BNO08X_ADDR 0x4B  // SparkFun BNO08x Breakout (Qwiic) defaults to 0x4B
 #define BNO08X_ADDR 0x4A // Alternate address if ADR jumper is closed
@@ -56,6 +57,7 @@ void updateBiases()
 
 void getGyroRates()
 {
+  // measures gyro rates and updates gyroMeasurement
   if (IMU.getSensorEventID() == SENSOR_REPORTID_UNCALIBRATED_GYRO)
   {
     gyroMeasurement[0] = IMU.getUncalibratedGyroX();
@@ -66,6 +68,7 @@ void getGyroRates()
 
 void gryoFilter()
 {
+  // removes prerecorded bias from gyroMeasurement
   filteredGyro[0] = gyroMeasurement[0] - oldGyroBias[0];
   filteredGyro[1] = gyroMeasurement[1] - oldGyroBias[1];
   filteredGyro[2] = gyroMeasurement[2] - oldGyroBias[2];
@@ -73,6 +76,7 @@ void gryoFilter()
 
 void gyroQuaternion(float dt)
 {
+  // updates orientationQuaternion with new orientationQuaternion via gyro integration
   float dq[4] = {0, 0, 0, 0};
   float v[3] = {0, 0, 0};
   float gyroMag = sqrt(filteredGyro[0] * filteredGyro[0] + filteredGyro[1] * filteredGyro[1] + filteredGyro[2] * filteredGyro[2]);
@@ -105,12 +109,14 @@ void gyroQuaternion(float dt)
 
 void getBaro()
 {
+  // updates baroMeasurement with new baroMeasurement from sensor
   baroMeaurement = bmp.readAltitude(SEALEVELPRESSURE_HPA);
 }
 
 void updateInitialOrientation()
 {
-  // USE ONLY BEFORE LAUNCH! This function is only accurate when the rocket is on the ground. It sets the initial orientation of the rocket.
+  // called together with updateBias
+  //  USE ONLY BEFORE LAUNCH! This function is only accurate when the rocket is on the ground. It sets the initial orientation of the rocket. As long as this is not called twice after launch it should be fine, so only activate every 5 seconds.
   for (int i = 0; i < 4; i++)
   {
     orientationQuaternion[i] = initialOrientation[i];
@@ -125,27 +131,15 @@ void updateInitialOrientation()
   }
 }
 
-// void getAccelQuaternion()
-// {
-//   if (IMU.getSensorEventID() == SENSOR_REPORTID_ACCELEROMETER)
-//   {
-//     accelMeasurement[0] = IMU.getAccelX();
-//     accelMeasurement[1] = IMU.getAccelY();
-//     accelMeasurement[2] = IMU.getAccelZ();
-
-//     float cy = cos(accelMeasurement[2] * 0.5);
-//     float sy = sin(accelMeasurement[2] * 0.5);
-//     float cp = cos(accelMeasurement[1] * 0.5);
-//     float sp = sin(accelMeasurement[1] * 0.5);
-//     float cr = cos(accelMeasurement[0] * 0.5);
-//     float sr = sin(accelMeasurement[0] * 0.5);
-
-//     accelQuaternion[0] = cr * cp * cy + sr * sp * sy;
-//     accelQuaternion[1] = sr * cp * cy - cr * sp * sy;
-//     accelQuaternion[2] = cr * sp * cy + sr * cp * sy;
-//     accelQuaternion[3] = cr * cp * sy - sr * sp * cy;
-//   }
-// }
+void getAccelQuaternion()
+{
+  if (IMU.getSensorEventID() == SENSOR_REPORTID_ACCELEROMETER)
+  {
+    accelMeasurement[0] = IMU.getAccelX();
+    accelMeasurement[1] = IMU.getAccelY();
+    accelMeasurement[2] = IMU.getAccelZ();
+  }
+}
 
 unsigned long oldtime;
 unsigned long newtime;
@@ -154,6 +148,7 @@ float printTime;
 
 void setReports()
 {
+  // sets the reports that the IMU should send
   if (IMU.enableUncalibratedGyro(1000) == true)
   {
     Serial.println(F("Gyro enabled"));
@@ -192,6 +187,7 @@ void setReports()
 
 void printData()
 {
+  // debugging, disable for flight
   Serial.print("Quaternion: ");
   Serial.print(orientationQuaternion[0]);
   Serial.print(", ");
