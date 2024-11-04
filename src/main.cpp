@@ -37,6 +37,9 @@ BNO08x IMU;
 #define gravity 9.81
 #define targetAlt 250.0
 #define targetTime 41.0
+#define logTime 150.0 // log data every x milliseconds
+
+#define Serialx Serial // change to serial1 for elrs.
 
 unsigned long oldGyroTime;
 unsigned long newGyroTime;
@@ -56,6 +59,11 @@ float correctedAccelQuaternion[4] = {0, 0, 0, 0};
 
 float initialOrientation[4] = {0, 0, 0, 0};
 
+bool armed = false;
+bool launchDetected = false;
+float launchAccelThreshold = 20.0;
+float currentEstimate = 0;
+
 // float accelQuaternion[4] = {0, 0, 0, 0};
 
 // put function declarations here:
@@ -66,9 +74,10 @@ unsigned long oldKalmanTime;
 unsigned long newKalmanTime;
 
 Adafruit_BMP3XX bmp;
+
+// USE ONLY BEFORE LAUNCH! Called every 5 seconds, updates gyroBias with new gyroBias, and oldGyroBias with gyroBias. Called together with updateInitialOrientation. Older data is kept to prevent bad data from entering after launch.
 void updateBiases()
 {
-  // called every 5 seconds, updates gyroBias with new gyroBias, and oldGyroBias with gyroBias. Always use oldGyroBias for launch.
   if (IMU.getSensorEventID() == SENSOR_REPORTID_UNCALIBRATED_GYRO)
   {
     for (int i = 0; i < 3; i++)
@@ -81,9 +90,9 @@ void updateBiases()
   }
 }
 
+// measures gyro rates and updates gyroMeasurement
 void getGyroRates()
 {
-  // measures gyro rates and updates gyroMeasurement
   if (IMU.getSensorEventID() == SENSOR_REPORTID_UNCALIBRATED_GYRO)
   {
     gyroMeasurement[0] = IMU.getUncalibratedGyroX();
@@ -92,17 +101,17 @@ void getGyroRates()
   }
 }
 
+// removes prerecorded bias from gyroMeasurement
 void gryoFilter()
 {
-  // removes prerecorded bias from gyroMeasurement
   filteredGyro[0] = gyroMeasurement[0] - oldGyroBias[0];
   filteredGyro[1] = gyroMeasurement[1] - oldGyroBias[1];
   filteredGyro[2] = gyroMeasurement[2] - oldGyroBias[2];
 }
 
+// updates orientationQuaternion with new orientationQuaternion via gyro integration
 void gyroQuaternion()
 {
-  // updates orientationQuaternion with new orientationQuaternion via gyro integration
   newGyroTime = micros();
   float dt = (newGyroTime - oldGyroTime) / 1000000.0;
   oldGyroTime = newGyroTime;
@@ -137,20 +146,15 @@ void gyroQuaternion()
   }
 }
 
+// updates baroMeasurement with new baroMeasurement from sensor
 void getBaro()
 {
-  // updates baroMeasurement with new baroMeasurement from sensor
   baroMeaurement = bmp.readAltitude(SEALEVELPRESSURE_HPA);
 }
 
+//  USE ONLY BEFORE LAUNCH! Sets the initial orientation of the rocket. Must be real time, called up until ARM signal recieved.
 void updateInitialOrientation()
 {
-  // called together with updateBias
-  //  USE ONLY BEFORE LAUNCH! This function is only accurate when the rocket is on the ground. It sets the initial orientation of the rocket. As long as this is not called twice after launch it should be fine, so only activate every 5 seconds.
-  for (int i = 0; i < 4; i++)
-  {
-    orientationQuaternion[i] = initialOrientation[i];
-  }
 
   if (IMU.getSensorEventID() == SENSOR_REPORTID_ROTATION_VECTOR)
   {
@@ -159,8 +163,14 @@ void updateInitialOrientation()
     initialOrientation[2] = IMU.getQuatJ();
     initialOrientation[3] = IMU.getQuatK();
   }
+
+  for (int i = 0; i < 4; i++)
+  {
+    orientationQuaternion[i] = initialOrientation[i];
+  }
 }
 
+// gets corrected accel quaternion rotated to be in world reference frame (gravity is removed)
 void getAccelQuaternion()
 {
   if (IMU.getSensorEventID() == SENSOR_REPORTID_ACCELEROMETER)
@@ -197,9 +207,10 @@ void getAccelQuaternion()
   // correct for gravity
   correctedAccelQuaternion[3] -= gravity;
 }
+
+// sets the reports that the IMU should send
 void setReports()
 {
-  // sets the reports that the IMU should send
   if (IMU.enableUncalibratedGyro(1000) == true)
   {
     Serial.println(F("Gyro enabled"));
@@ -236,9 +247,9 @@ void setReports()
   // }
 }
 
+// debugging, disable for flight
 void printData()
 {
-  // debugging, disable for flight
   // Serial.print("Quaternion: ");
   // Serial.print(orientationQuaternion[0]);
   // Serial.print(", ");
@@ -258,6 +269,7 @@ void printData()
   Serial.println(correctedAccelQuaternion[3]);
 }
 
+// sets up kalman filter model
 void setupKalman()
 {
 
@@ -278,6 +290,7 @@ void setupKalman()
          0.0, 0.0, m_a * m_a};
 }
 
+// updates kalman filter model with new observation
 void updateKalman()
 {
   newKalmanTime = micros();
@@ -295,12 +308,12 @@ void updateKalman()
   K.update(obs);
 }
 
+// run servos based on kalman state
 void runServos()
 {
-  // run servos based on kalman state
   // K.x is kalman state. (0) is position, (1) is speed, (2) is acceleration
 
-  float currentEstimate = -((K.x(1) * K.x(1)) / (K.x(2) - gravity)) + K.x(0);
+  currentEstimate = -((K.x(1) * K.x(1)) / (K.x(2) - gravity)) + K.x(0);
   if (currentEstimate > targetAlt)
   {
     Serial.println("Extend Servos ");
@@ -311,11 +324,60 @@ void runServos()
   }
 }
 
+// updates launchDetected based on raw accelerometer
+void detectLaunch()
+{
+  float accelMag = sqrt(accelMeasurement[0] * accelMeasurement[0] + accelMeasurement[1] * accelMeasurement[1] + accelMeasurement[2] * accelMeasurement[2]);
+  if (accelMag > launchAccelThreshold && armed)
+  {
+    launchDetected = true;
+  }
+}
+
+// in flight communications. Update to serial1
+void serialComms()
+{
+  if (Serial.available() > 0)
+  {
+    char inChar = Serial.read();
+    if (inChar == 'a')
+    {
+      armed = true;
+    }
+    if (inChar == 'd')
+    {
+      armed = false;
+    }
+  }
+  if (armed)
+  {
+    Serialx.print(K.x(0));
+    Serialx.print(",");
+    Serialx.print(K.x(1));
+    Serialx.print(",");
+    Serialx.print(K.x(2));
+    Serialx.print(",");
+    Serialx.print(currentEstimate);
+    Serialx.print(",");
+    Serialx.print(baroMeaurement);
+    Serialx.print(",");
+    Serialx.print(correctedAccelQuaternion[3]);
+    Serialx.println();
+  }
+  else
+  {
+    launchDetected = false;
+    Serial.println("Not armed!");
+  }
+}
+
 void setup()
 {
   // put your setup code here, to run once:
   // pinMode(13, INPUT_PULLDOWN);
   Serial.begin(115200);
+  Serial1.begin(14400);
+
   while (!Serial)
     delay(10); // will pause Zero, Leonardo, etc until serial console opens
 
@@ -366,7 +428,7 @@ void loop()
     getAccelQuaternion();
   }
 
-  if (millis() - printTime > 100)
+  if (millis() - printTime > logTime)
   {
     printData();
   }
