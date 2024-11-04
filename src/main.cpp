@@ -30,6 +30,7 @@ float orientationQuaternion[4] = {1, 0, 0, 0};
 float baroMeaurement = 0; // baro measurement in meters adjusted by sealevel HPA
 
 float accelMeasurement[3] = {0, 0, 0};
+float correctedAccelQuaternion[4] = {0, 0, 0, 0};
 
 float initialOrientation[4] = {0, 0, 0, 0};
 
@@ -139,6 +140,30 @@ void getAccelQuaternion()
     accelMeasurement[1] = IMU.getAccelY();
     accelMeasurement[2] = IMU.getAccelZ();
   }
+
+  float uncorrectedAccelQuaternion[4] = {0, 0, 0, 0};
+  uncorrectedAccelQuaternion[0] = 0;
+  uncorrectedAccelQuaternion[1] = accelMeasurement[0];
+  uncorrectedAccelQuaternion[2] = accelMeasurement[1];
+  uncorrectedAccelQuaternion[3] = accelMeasurement[2];
+
+  float orientationTimesAccel[4] = {0, 0, 0, 0};
+  orientationTimesAccel[0] = orientationQuaternion[0] * uncorrectedAccelQuaternion[0] - orientationQuaternion[1] * uncorrectedAccelQuaternion[1] - orientationQuaternion[2] * uncorrectedAccelQuaternion[2] - orientationQuaternion[3] * uncorrectedAccelQuaternion[3];
+  orientationTimesAccel[1] = orientationQuaternion[0] * uncorrectedAccelQuaternion[1] + orientationQuaternion[1] * uncorrectedAccelQuaternion[0] + orientationQuaternion[2] * uncorrectedAccelQuaternion[3] - orientationQuaternion[3] * uncorrectedAccelQuaternion[2];
+  orientationTimesAccel[2] = orientationQuaternion[0] * uncorrectedAccelQuaternion[2] - orientationQuaternion[1] * uncorrectedAccelQuaternion[3] + orientationQuaternion[2] * uncorrectedAccelQuaternion[0] + orientationQuaternion[3] * uncorrectedAccelQuaternion[1];
+  orientationTimesAccel[3] = orientationQuaternion[0] * uncorrectedAccelQuaternion[3] + orientationQuaternion[1] * uncorrectedAccelQuaternion[2] - orientationQuaternion[2] * uncorrectedAccelQuaternion[1] + orientationQuaternion[3] * uncorrectedAccelQuaternion[0];
+
+  float inverseOrientation[4] = {0, 0, 0, 0};
+  float orientationMag = sqrt(orientationQuaternion[0] * orientationQuaternion[0] + orientationQuaternion[1] * orientationQuaternion[1] + orientationQuaternion[2] * orientationQuaternion[2] + orientationQuaternion[3] * orientationQuaternion[3]);
+  inverseOrientation[0] = orientationQuaternion[0] / (orientationMag * orientationMag);
+  inverseOrientation[1] = -orientationQuaternion[1] / (orientationMag * orientationMag);
+  inverseOrientation[2] = -orientationQuaternion[2] / (orientationMag * orientationMag);
+  inverseOrientation[3] = -orientationQuaternion[3] / (orientationMag * orientationMag);
+
+  correctedAccelQuaternion[0] = orientationTimesAccel[0] * inverseOrientation[0] - orientationTimesAccel[1] * inverseOrientation[1] - orientationTimesAccel[2] * inverseOrientation[2] - orientationTimesAccel[3] * inverseOrientation[3];
+  correctedAccelQuaternion[1] = orientationTimesAccel[0] * inverseOrientation[1] + orientationTimesAccel[1] * inverseOrientation[0] + orientationTimesAccel[2] * inverseOrientation[3] - orientationTimesAccel[3] * inverseOrientation[2];
+  correctedAccelQuaternion[2] = orientationTimesAccel[0] * inverseOrientation[2] - orientationTimesAccel[1] * inverseOrientation[3] + orientationTimesAccel[2] * inverseOrientation[0] + orientationTimesAccel[3] * inverseOrientation[1];
+  correctedAccelQuaternion[3] = orientationTimesAccel[0] * inverseOrientation[3] + orientationTimesAccel[1] * inverseOrientation[2] - orientationTimesAccel[2] * inverseOrientation[1] + orientationTimesAccel[3] * inverseOrientation[0];
 }
 
 unsigned long oldtime;
@@ -188,14 +213,23 @@ void setReports()
 void printData()
 {
   // debugging, disable for flight
+  // Serial.print("Quaternion: ");
+  // Serial.print(orientationQuaternion[0]);
+  // Serial.print(", ");
+  // Serial.print(orientationQuaternion[1]);
+  // Serial.print(", ");
+  // Serial.print(orientationQuaternion[2]);
+  // Serial.print(", ");
+  // Serial.println(orientationQuaternion[3]);
+
   Serial.print("Quaternion: ");
-  Serial.print(orientationQuaternion[0]);
+  Serial.print(correctedAccelQuaternion[0]);
   Serial.print(", ");
-  Serial.print(orientationQuaternion[1]);
+  Serial.print(correctedAccelQuaternion[1]);
   Serial.print(", ");
-  Serial.print(orientationQuaternion[2]);
+  Serial.print(correctedAccelQuaternion[2]);
   Serial.print(", ");
-  Serial.println(orientationQuaternion[3]);
+  Serial.println(correctedAccelQuaternion[3]);
 }
 
 void printAccelData()
@@ -253,10 +287,9 @@ void loop()
     gryoFilter();
     newtime = micros();
     dt = newtime - oldtime;
-    // gyroEuler(dt / 1000000);
     gyroQuaternion(dt / 1000000);
     oldtime = newtime;
-    // updateGravityQuaternion();
+    getAccelQuaternion();
   }
 
   if (millis() - printTime > 100)
