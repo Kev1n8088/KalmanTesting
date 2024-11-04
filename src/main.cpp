@@ -20,6 +20,31 @@ BNO08x IMU;
 
 #define SEALEVELPRESSURE_HPA (1013.25)
 
+#define BNO08X_RESET -1
+
+#define Nstate 3 // position, speed, acceleration
+#define Nobs 2   // position, acceleration
+
+// measurement std of the noise
+#define n_p 0.5 // position measurement noise
+#define n_a 5.0 // acceleration measurement noise
+
+// model std (1/inertia)
+#define m_p 0.1
+#define m_s 0.1
+#define m_a 0.8
+
+#define gravity 9.81
+#define targetAlt 250.0
+#define targetTime 41.0
+
+unsigned long oldGyroTime;
+unsigned long newGyroTime;
+float printTime;
+
+unsigned long oldEstTime;
+unsigned long newEstTime;
+
 float gyroBias[3] = {0, 0, 0};
 float oldGyroBias[3] = {0, 0, 0};
 
@@ -38,7 +63,10 @@ float initialOrientation[4] = {0, 0, 0, 0};
 
 // put function declarations here:
 
-#define BNO08X_RESET -1
+BLA::Matrix<Nobs> obs;
+KALMAN<Nstate, Nobs> K;
+unsigned long oldKalmanTime;
+unsigned long newKalmanTime;
 
 Adafruit_BMP3XX bmp;
 void updateBiases()
@@ -75,9 +103,13 @@ void gryoFilter()
   filteredGyro[2] = gyroMeasurement[2] - oldGyroBias[2];
 }
 
-void gyroQuaternion(float dt)
+void gyroQuaternion()
 {
   // updates orientationQuaternion with new orientationQuaternion via gyro integration
+  newGyroTime = micros();
+  float dt = (newGyroTime - oldGyroTime) / 1000000.0;
+  oldGyroTime = newGyroTime;
+
   float dq[4] = {0, 0, 0, 0};
   float v[3] = {0, 0, 0};
   float gyroMag = sqrt(filteredGyro[0] * filteredGyro[0] + filteredGyro[1] * filteredGyro[1] + filteredGyro[2] * filteredGyro[2]);
@@ -164,13 +196,10 @@ void getAccelQuaternion()
   correctedAccelQuaternion[1] = orientationTimesAccel[0] * inverseOrientation[1] + orientationTimesAccel[1] * inverseOrientation[0] + orientationTimesAccel[2] * inverseOrientation[3] - orientationTimesAccel[3] * inverseOrientation[2];
   correctedAccelQuaternion[2] = orientationTimesAccel[0] * inverseOrientation[2] - orientationTimesAccel[1] * inverseOrientation[3] + orientationTimesAccel[2] * inverseOrientation[0] + orientationTimesAccel[3] * inverseOrientation[1];
   correctedAccelQuaternion[3] = orientationTimesAccel[0] * inverseOrientation[3] + orientationTimesAccel[1] * inverseOrientation[2] - orientationTimesAccel[2] * inverseOrientation[1] + orientationTimesAccel[3] * inverseOrientation[0];
+
+  // correct for gravity
+  correctedAccelQuaternion[3] -= gravity;
 }
-
-unsigned long oldtime;
-unsigned long newtime;
-float dt;
-float printTime;
-
 void setReports()
 {
   // sets the reports that the IMU should send
@@ -232,8 +261,57 @@ void printData()
   Serial.println(correctedAccelQuaternion[3]);
 }
 
-void printAccelData()
+void setupKalman()
 {
+
+  // time evolution matrix (whatever... it will be updated inloop)
+  K.F = {1.0, 0.0, 0.0,
+         0.0, 1.0, 0.0,
+         0.0, 0.0, 1.0};
+
+  // measurement matrix n the position (e.g. GPS) and acceleration (e.g. accelerometer)
+  K.H = {1.0, 0.0, 0.0,
+         0.0, 0.0, 1.0};
+  // measurement covariance matrix
+  K.R = {n_p * n_p, 0.0,
+         0.0, n_a * n_a};
+  // model covariance matrix
+  K.Q = {m_p * m_p, 0.0, 0.0,
+         0.0, m_s * m_s, 0.0,
+         0.0, 0.0, m_a * m_a};
+}
+
+void updateKalman()
+{
+  newKalmanTime = micros();
+  float dkt = (newKalmanTime - oldKalmanTime) / 1000000.0;
+  oldKalmanTime = newKalmanTime;
+
+  K.F = {1.0, dkt, 0.5 * dkt * dkt,
+         0.0, 1.0, dkt,
+         0.0, 0.0, 1.0};
+
+  getBaro();
+  obs(0) = baroMeaurement;
+  obs(1) = correctedAccelQuaternion[3];
+
+  K.update(obs);
+}
+
+void runServos()
+{
+  // run servos based on kalman state
+  // K.x is kalman state. (0) is position, (1) is speed, (2) is acceleration
+
+  float currentEstimate = -((K.x(1) * K.x(1)) / (K.x(2) - gravity)) + K.x(0);
+  if (currentEstimate > targetAlt)
+  {
+    Serial.println("Extend Servos ");
+  }
+  else
+  {
+    Serial.println("Retract Servos ");
+  }
 }
 
 void setup()
@@ -267,6 +345,7 @@ void setup()
   bmp.setOutputDataRate(BMP3_ODR_50_HZ);*/
 
   setReports();
+  setupKalman();
 
   for (int i = 0; i < 1000; i++)
   {
@@ -275,7 +354,8 @@ void setup()
       updateInitialOrientation();
     }
   }
-  oldtime = micros();
+  oldGyroTime = micros();
+  oldKalmanTime = micros();
 }
 
 void loop()
@@ -285,10 +365,7 @@ void loop()
     // Serial.println("Sensor event");
     getGyroRates();
     gryoFilter();
-    newtime = micros();
-    dt = newtime - oldtime;
-    gyroQuaternion(dt / 1000000);
-    oldtime = newtime;
+    gyroQuaternion();
     getAccelQuaternion();
   }
 
