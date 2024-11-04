@@ -42,9 +42,6 @@ unsigned long oldGyroTime;
 unsigned long newGyroTime;
 float printTime;
 
-unsigned long oldEstTime;
-unsigned long newEstTime;
-
 float gyroBias[3] = {0, 0, 0};
 float oldGyroBias[3] = {0, 0, 0};
 
