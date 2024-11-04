@@ -35,7 +35,7 @@ BNO08x IMU;
 
 // measurement std of the noise
 #define n_p 0.5 // position measurement noise
-#define n_a 5.0 // acceleration measurement noise
+#define n_a 3.0 // acceleration measurement noise
 
 // model std (1/inertia)
 #define m_p 0.1
@@ -45,13 +45,16 @@ BNO08x IMU;
 #define gravity 9.81
 #define targetAlt 250.0
 #define targetTime 41.0
-#define logTime 150.0 // log data every x milliseconds
+
+#define logTime 150.0   // log data every x milliseconds
+#define tareTime 5000.0 // tare every x milliseconds
 
 #define Serialx Serial // change to serial1 for elrs.
 
 unsigned long oldGyroTime;
 unsigned long newGyroTime;
 float printTime;
+float biasTime;
 
 float gyroBias[3] = {0, 0, 0};
 float oldGyroBias[3] = {0, 0, 0};
@@ -68,6 +71,7 @@ float correctedAccelQuaternion[4] = {0, 0, 0, 0};
 float initialOrientation[4] = {0, 0, 0, 0};
 
 bool armed = false;
+bool pastApogee = false;
 bool launchDetected = false;
 float launchAccelThreshold = 20.0;
 float currentEstimate = 0;
@@ -271,15 +275,6 @@ void setReports()
   {
     Serial.println("Could not enable rotation vector");
   }
-  // if (IMU.enableGravity() == true)
-  // {
-  //   Serial.println(F("Gravity enabled"));
-  //   Serial.println(F("Output in form x, y, z, accuracy"));
-  // }
-  // else
-  // {
-  //   Serial.println("Could not enable gravity");
-  // }
 }
 
 // debugging, disable for flight
@@ -349,13 +344,21 @@ void runServos()
   // K.x is kalman state. (0) is position, (1) is speed, (2) is acceleration
 
   currentEstimate = -((K.x(1) * K.x(1)) / (K.x(2) - gravity)) + K.x(0);
-  if (currentEstimate > targetAlt)
+  if (!pastApogee && launchDetected)
   {
-    Serial.println("Extend Servos ");
+    if (currentEstimate > targetAlt)
+    {
+      Serial.println("Extend Servos ");
+    }
+    else
+    {
+      Serial.println("Retract Servos ");
+    }
   }
-  else
+  else if (pastApogee)
   {
     Serial.println("Retract Servos ");
+    // Change this to also use servos for duration control
   }
 }
 
@@ -366,6 +369,13 @@ void detectLaunch()
   if (accelMag > launchAccelThreshold && armed)
   {
     launchDetected = true;
+  }
+  if (launchDetected)
+  {
+    if (K.x(1) < 0)
+    {
+      pastApogee = true;
+    }
   }
 }
 
@@ -378,6 +388,9 @@ void serialComms()
     if (inChar == 'a')
     {
       armed = true;
+      initAtArm();
+      oldGyroTime = micros();
+      oldKalmanTime = micros();
     }
     if (inChar == 'd')
     {
@@ -402,14 +415,30 @@ void serialComms()
   else
   {
     launchDetected = false;
+    pastApogee = false;
     Serial.println("Not armed!");
   }
+}
+
+void initAtArm()
+{
+  IMU.softReset();
+  setReports();
+  for (int i = 0; i < 3; i++)
+  {
+    while (IMU.getSensorEvent() == false)
+    {
+      delay(10);
+    }
+    updateBiases();
+    updateInitialOrientation();
+  }
+  setupKalman();
 }
 
 void setup()
 {
   // put your setup code here, to run once:
-  // pinMode(13, INPUT_PULLDOWN);
   Serial.begin(115200);
   Serial1.begin(14400);
 
@@ -424,54 +453,55 @@ void setup()
       ;
   }
 
-  /*if (!bmp.begin_I2C())
-  { // hardware I2C mode, can pass in address & alt Wire
-    // if (! bmp.begin_SPI(BMP_CS)) {  // hardware SPI mode
-    // if (! bmp.begin_SPI(BMP_CS, BMP_SCK, BMP_MISO, BMP_MOSI)) {  // software SPI mode
-    Serial.println("Could not find a valid BMP3 sensor, check wiring!");ff
-    while (1)
-      ;
-  }
+  // if (!bmp.begin_I2C())
+  // { // hardware I2C mode, can pass in address & alt Wire
+  //   // if (! bmp.begin_SPI(BMP_CS)) {  // hardware SPI mode
+  //   // if (! bmp.begin_SPI(BMP_CS, BMP_SCK, BMP_MISO, BMP_MOSI)) {  // software SPI mode
+  //   Serial.println("Could not find a valid BMP3 sensor, check wiring!");ff
+  //   while (1)
+  //     ;
+  // }
 
-  bmp.setTemperatureOversampling(BMP3_OVERSAMPLING_8X);
-  bmp.setPressureOversampling(BMP3_OVERSAMPLING_4X);
-  bmp.setIIRFilterCoeff(BMP3_IIR_FILTER_COEFF_3);
-  bmp.setOutputDataRate(BMP3_ODR_50_HZ);*/
-
-  setReports();
-  setupKalman();
-
-  for (int i = 0; i < 1000; i++)
-  {
-    if (IMU.getSensorEvent() == true)
-    {
-      updateInitialOrientation();
-    }
-  }
-  oldGyroTime = micros();
-  oldKalmanTime = micros();
+  // bmp.setTemperatureOversampling(BMP3_OVERSAMPLING_8X);
+  // bmp.setPressureOversampling(BMP3_OVERSAMPLING_4X);
+  // bmp.setIIRFilterCoeff(BMP3_IIR_FILTER_COEFF_3);
+  // bmp.setOutputDataRate(BMP3_ODR_50_HZ);
 }
 
 void loop()
 {
-  if (IMU.getSensorEvent() == true)
-  {
-    // Serial.println("Sensor event");
-    getGyroRates();
-    gryoFilter();
-    gyroQuaternion();
-    getAccelQuaternion();
-  }
-
   if (millis() - printTime > logTime)
   {
-    printData();
+    serialComms();
+    printTime = millis();
   }
-
-  /*if (bmp.performReading())
+  if (armed)
   {
-    getBaro();
-  }
+    if (!launchDetected)
+    {
+      if (millis() - biasTime > tareTime)
+      {
+        while (IMU.getSensorEvent() == false)
+        {
+          delay(10);
+        }
+        updateBiases();
+        biasTime = millis();
+      }
+    }
+    // if (bmp.performReading())
+    // {
+    //   getBaro();
+    // }
 
-  */
+    if (IMU.getSensorEvent() == true)
+    {
+      getGyroRates();
+      gryoFilter();
+      gyroQuaternion();
+      getAccelQuaternion();
+      // updateKalman();
+      detectLaunch();
+    }
+  }
 }
