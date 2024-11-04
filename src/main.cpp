@@ -7,6 +7,14 @@
 #include <Kalman.h>
 #include <math.h> // Include math library for trigonometric functions
 
+#include "driver/uart.h"
+#include "esp_log.h"
+
+#define UART_NUM UART_NUM_1
+#define TXD_PIN (5)
+#define RXD_PIN (22)
+#define BUF_SIZE (1024)
+
 using namespace BLA;
 
 #define BNO08X_INT -1
@@ -74,6 +82,33 @@ unsigned long oldKalmanTime;
 unsigned long newKalmanTime;
 
 Adafruit_BMP3XX bmp;
+
+void init_uart()
+{
+  const uart_config_t uart_config = {
+      .baud_rate = 14400,
+      .data_bits = UART_DATA_8_BITS,
+      .parity = UART_PARITY_DISABLE,
+      .stop_bits = UART_STOP_BITS_1,
+      .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
+      .source_clk = UART_SCLK_APB,
+  };
+
+  // Configure UART parameters
+  uart_param_config(UART_NUM, &uart_config);
+
+  // Set UART pins
+  uart_set_pin(UART_NUM, TXD_PIN, RXD_PIN, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
+
+  // Install UART driver using DMA
+  uart_driver_install(UART_NUM, BUF_SIZE * 2, BUF_SIZE * 2, 0, NULL, ESP_INTR_FLAG_IRAM);
+}
+
+void send_data(const char *data)
+{
+  int len = strlen(data);
+  uart_write_bytes(UART_NUM, data, len);
+}
 
 // USE ONLY BEFORE LAUNCH! Called every 5 seconds, updates gyroBias with new gyroBias, and oldGyroBias with gyroBias. Called together with updateInitialOrientation. Older data is kept to prevent bad data from entering after launch.
 void updateBiases()
@@ -433,11 +468,10 @@ void loop()
     printData();
   }
 
-  /*if (!bmp.performReading())
+  /*if (bmp.performReading())
   {
-    return;
+    getBaro();
   }
 
-  getBaro();
   */
 }
