@@ -43,6 +43,7 @@ BNO08x IMU;
 #define m_a 0.8
 
 #define gravity 9.81
+#define gravityOffset 0.43 // compensates for noise
 #define targetAlt 250.0
 #define targetTime 41.0
 
@@ -56,25 +57,25 @@ unsigned long newGyroTime;
 float printTime;
 float biasTime;
 
-float gyroBias[3] = {0, 0, 0};
-float oldGyroBias[3] = {0, 0, 0};
+float gyroBias[3] = {0.0, 0.0, 0.0};
+float oldGyroBias[3] = {0.0, 0, 0.0};
 
-float gyroMeasurement[3] = {0, 0, 0};
-float filteredGyro[3] = {0, 0, 0};
-float orientationQuaternion[4] = {1, 0, 0, 0};
+float gyroMeasurement[3] = {0.0, 0.0, 0.0};
+float filteredGyro[3] = {0.0, 0.0, 0.0};
+float orientationQuaternion[4] = {1.0, 0.0, 0.0, 0.0};
 
-float baroMeaurement = 0; // baro measurement in meters adjusted by sealevel HPA
+float baroMeaurement = 0.0; // baro measurement in meters adjusted by sealevel HPA
 
-float accelMeasurement[3] = {0, 0, 0};
-float correctedAccelQuaternion[4] = {0, 0, 0, 0};
+float accelMeasurement[3] = {0.0, 0.0, 0.0};
+float correctedAccelQuaternion[4] = {0.0, 0.0, 0.0, 0.0};
 
-float initialOrientation[4] = {0, 0, 0, 0};
+float initialOrientation[4] = {0.0, 0.0, 0.0, 0.0};
 
 bool armed = false;
 bool pastApogee = false;
 bool launchDetected = false;
 float launchAccelThreshold = 20.0;
-float currentEstimate = 0;
+float currentEstimate = 0.0;
 
 // float accelQuaternion[4] = {0, 0, 0, 0};
 
@@ -141,7 +142,7 @@ void getGyroRates()
 }
 
 // removes prerecorded bias from gyroMeasurement
-void gryoFilter()
+void gyroFilter()
 {
   filteredGyro[0] = gyroMeasurement[0] - oldGyroBias[0];
   filteredGyro[1] = gyroMeasurement[1] - oldGyroBias[1];
@@ -155,11 +156,11 @@ void gyroQuaternion()
   float dt = (newGyroTime - oldGyroTime) / 1000000.0;
   oldGyroTime = newGyroTime;
 
-  float dq[4] = {0, 0, 0, 0};
-  float v[3] = {0, 0, 0};
+  float dq[4] = {0.0, 0.0, 0.0, 0.0};
+  float v[3] = {0.0, 0.0, 0.0};
   float gyroMag = sqrt(filteredGyro[0] * filteredGyro[0] + filteredGyro[1] * filteredGyro[1] + filteredGyro[2] * filteredGyro[2]);
 
-  if (gyroMag == 0)
+  if (gyroMag == 0.0)
   {
     return;
   }
@@ -172,13 +173,16 @@ void gyroQuaternion()
   dq[1] = sin(0.5 * theta) * v[0];
   dq[2] = sin(0.5 * theta) * v[1];
   dq[3] = sin(0.5 * theta) * v[2];
-
   orientationQuaternion[0] = orientationQuaternion[0] * dq[0] - orientationQuaternion[1] * dq[1] - orientationQuaternion[2] * dq[2] - orientationQuaternion[3] * dq[3];
   orientationQuaternion[1] = orientationQuaternion[0] * dq[1] + orientationQuaternion[1] * dq[0] + orientationQuaternion[2] * dq[3] - orientationQuaternion[3] * dq[2];
   orientationQuaternion[2] = orientationQuaternion[0] * dq[2] - orientationQuaternion[1] * dq[3] + orientationQuaternion[2] * dq[0] + orientationQuaternion[3] * dq[1];
   orientationQuaternion[3] = orientationQuaternion[0] * dq[3] + orientationQuaternion[1] * dq[2] - orientationQuaternion[2] * dq[1] + orientationQuaternion[3] * dq[0];
 
   float mag = sqrt(orientationQuaternion[0] * orientationQuaternion[0] + orientationQuaternion[1] * orientationQuaternion[1] + orientationQuaternion[2] * orientationQuaternion[2] + orientationQuaternion[3] * orientationQuaternion[3]);
+  if (mag == 0.0)
+  {
+    return;
+  }
   for (int i = 0; i < 4; i++)
   {
     orientationQuaternion[i] = orientationQuaternion[i] / mag;
@@ -233,6 +237,10 @@ void getAccelQuaternion()
 
   float inverseOrientation[4] = {0, 0, 0, 0};
   float orientationMag = sqrt(orientationQuaternion[0] * orientationQuaternion[0] + orientationQuaternion[1] * orientationQuaternion[1] + orientationQuaternion[2] * orientationQuaternion[2] + orientationQuaternion[3] * orientationQuaternion[3]);
+  if (orientationMag == 0.0)
+  {
+    return;
+  }
   inverseOrientation[0] = orientationQuaternion[0] / (orientationMag * orientationMag);
   inverseOrientation[1] = -orientationQuaternion[1] / (orientationMag * orientationMag);
   inverseOrientation[2] = -orientationQuaternion[2] / (orientationMag * orientationMag);
@@ -245,10 +253,11 @@ void getAccelQuaternion()
 
   // correct for gravity
   correctedAccelQuaternion[3] -= gravity;
+  correctedAccelQuaternion[3] += gravityOffset;
 }
 
 // sets the reports that the IMU should send
-void setReports()
+void setReports(bool enableRotationVector)
 {
   if (IMU.enableUncalibratedGyro(1000) == true)
   {
@@ -266,14 +275,17 @@ void setReports()
   {
     Serial.println("Could not enable accelerometer");
   }
-  if (IMU.enableRotationVector() == true)
+  if (enableRotationVector)
   {
-    Serial.println(F("Rotation vector enabled"));
-    Serial.println(F("Output in form i, j, k, real, accuracy"));
-  }
-  else
-  {
-    Serial.println("Could not enable rotation vector");
+    if (IMU.enableRotationVector() == true)
+    {
+      Serial.println(F("Rotation vector enabled"));
+      Serial.println(F("Output in form i, j, k, real, accuracy"));
+    }
+    else
+    {
+      Serial.println("Could not enable rotation vector");
+    }
   }
 }
 
@@ -288,6 +300,22 @@ void printData()
   // Serial.print(orientationQuaternion[2]);
   // Serial.print(", ");
   // Serial.println(orientationQuaternion[3]);
+
+  Serial.print("Gyro: ");
+  Serial.print(orientationQuaternion[0]);
+  Serial.print(", ");
+  Serial.print(orientationQuaternion[1]);
+  Serial.print(", ");
+  Serial.print(orientationQuaternion[2]);
+  Serial.print(", ");
+  Serial.println(orientationQuaternion[3]);
+
+  Serial.print("Raw accel: ");
+  Serial.print(accelMeasurement[0]);
+  Serial.print(", ");
+  Serial.print(accelMeasurement[1]);
+  Serial.print(", ");
+  Serial.println(accelMeasurement[2]);
 
   Serial.print("Quaternion: ");
   Serial.print(correctedAccelQuaternion[0]);
@@ -379,6 +407,57 @@ void detectLaunch()
   }
 }
 
+void resetVariables()
+{
+  for (int i = 0; i < 3; i++)
+  {
+    gyroBias[i] = 0.0;
+    oldGyroBias[i] = 0.0;
+    gyroMeasurement[i] = 0.0;
+    filteredGyro[i] = 0.0;
+    accelMeasurement[i] = 0.0;
+  }
+  for (int i = 0; i < 4; i++)
+  {
+    orientationQuaternion[i] = 0.0;
+    correctedAccelQuaternion[i] = 0.0;
+    initialOrientation[i] = 0.0;
+  }
+  orientationQuaternion[0] = 1.0;
+  initialOrientation[0] = 1.0;
+
+  baroMeaurement = 0.0; // baro measurement in meters adjusted by sealevel HPA
+}
+
+void initAtArm()
+{
+  resetVariables();
+  IMU.softReset();
+  delay(1000);
+  setReports(true);
+  for (int i = 0; i < 100; i++)
+  {
+    if (IMU.getSensorEvent() == true)
+    {
+      updateInitialOrientation();
+    }
+    delay(10);
+  }
+  IMU.softReset();
+  delay(1000);
+  setReports(false);
+  for (int i = 0; i < 100; i++)
+  {
+    if (IMU.getSensorEvent() == true)
+    {
+      updateBiases();
+    }
+    delay(10);
+  }
+  setupKalman();
+  resetVariables();
+}
+
 // in flight communications. Update to serial1
 void serialComms()
 {
@@ -399,18 +478,19 @@ void serialComms()
   }
   if (armed)
   {
-    Serialx.print(K.x(0));
-    Serialx.print(",");
-    Serialx.print(K.x(1));
-    Serialx.print(",");
-    Serialx.print(K.x(2));
-    Serialx.print(",");
-    Serialx.print(currentEstimate);
-    Serialx.print(",");
-    Serialx.print(baroMeaurement);
-    Serialx.print(",");
-    Serialx.print(correctedAccelQuaternion[3]);
-    Serialx.println();
+    // Serialx.print(K.x(0));
+    // Serialx.print(",");
+    // Serialx.print(K.x(1));
+    // Serialx.print(",");
+    // Serialx.print(K.x(2));
+    // Serialx.print(",");
+    // Serialx.print(currentEstimate);
+    // Serialx.print(",");
+    // Serialx.print(baroMeaurement);
+    // Serialx.print(",");
+    // Serialx.print(correctedAccelQuaternion[3]);
+    // Serialx.println();
+    printData();
   }
   else
   {
@@ -418,22 +498,6 @@ void serialComms()
     pastApogee = false;
     Serial.println("Not armed!");
   }
-}
-
-void initAtArm()
-{
-  IMU.softReset();
-  setReports();
-  for (int i = 0; i < 3; i++)
-  {
-    while (IMU.getSensorEvent() == false)
-    {
-      delay(10);
-    }
-    updateBiases();
-    updateInitialOrientation();
-  }
-  setupKalman();
 }
 
 void setup()
@@ -446,7 +510,8 @@ void setup()
     delay(10); // will pause Zero, Leonardo, etc until serial console opens
 
   Wire.begin();
-  if (IMU.begin(BNO08X_ADDR, Wire, BNO08X_INT, BNO08X_RST) == false)
+  Wire1.begin();
+  if (IMU.begin(BNO08X_ADDR, Wire1, BNO08X_INT, BNO08X_RST) == false)
   {
     Serial.println("BNO08x not detected at default I2C address. Check your jumpers and the hookup guide. Freezing...");
     while (1)
@@ -477,18 +542,7 @@ void loop()
   }
   if (armed)
   {
-    if (!launchDetected)
-    {
-      if (millis() - biasTime > tareTime)
-      {
-        while (IMU.getSensorEvent() == false)
-        {
-          delay(10);
-        }
-        updateBiases();
-        biasTime = millis();
-      }
-    }
+
     // if (bmp.performReading())
     // {
     //   getBaro();
@@ -497,11 +551,30 @@ void loop()
     if (IMU.getSensorEvent() == true)
     {
       getGyroRates();
-      gryoFilter();
+      gyroFilter();
       gyroQuaternion();
       getAccelQuaternion();
       // updateKalman();
       detectLaunch();
+    }
+
+    if (!launchDetected)
+    {
+      if (millis() - biasTime > tareTime)
+      {
+
+        IMU.getSensorEvent();
+        for (int i = 0; i < 500; i++)
+        {
+          if (IMU.getSensorEvent() == true)
+          {
+            updateBiases();
+            biasTime = millis();
+            break;
+          }
+          delay(1);
+        }
+      }
     }
   }
 }
