@@ -43,7 +43,7 @@ BNO08x IMU;
 #define m_a 0.8
 
 #define gravity 9.81
-#define gravityOffset 0.43 // compensates for noise
+#define gravityOffset 0.0 // compensates for noise
 #define targetAlt 250.0
 #define targetTime 41.0
 
@@ -205,11 +205,10 @@ void updateInitialOrientation()
     initialOrientation[1] = IMU.getQuatI();
     initialOrientation[2] = IMU.getQuatJ();
     initialOrientation[3] = IMU.getQuatK();
-  }
-
-  for (int i = 0; i < 4; i++)
-  {
-    orientationQuaternion[i] = initialOrientation[i];
+    for (int i = 0; i < 4; i++)
+    {
+      orientationQuaternion[i] = initialOrientation[i];
+    }
   }
 }
 
@@ -309,13 +308,6 @@ void printData()
   Serial.print(orientationQuaternion[2]);
   Serial.print(", ");
   Serial.println(orientationQuaternion[3]);
-
-  Serial.print("Raw accel: ");
-  Serial.print(accelMeasurement[0]);
-  Serial.print(", ");
-  Serial.print(accelMeasurement[1]);
-  Serial.print(", ");
-  Serial.println(accelMeasurement[2]);
 
   Serial.print("Quaternion: ");
   Serial.print(correctedAccelQuaternion[0]);
@@ -455,7 +447,6 @@ void initAtArm()
     delay(10);
   }
   setupKalman();
-  resetVariables();
 }
 
 // in flight communications. Update to serial1
