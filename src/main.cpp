@@ -59,10 +59,10 @@ BNO08x IMU;
 #define apogeeDetectAltDown 2.0 //how much below max alt to detect apogee passed
 #define apogeeDetectVelDown -1.0 //how much negative velocity to detect apogee passed
 
-unsigned long oldGyroTime;
-unsigned long newGyroTime;
-double printTime;
-double biasTime;
+unsigned long oldGyroTime; // old gyro time, used for gyro integration
+unsigned long newGyroTime; // new gyro time, used for gyro integration
+double printTime; // time of last printing for debugging
+double biasTime; // time of last added gyro biases
 
 double gyroBias[3] = {0.0, 0.0, 0.0}; //stored gyro biases, stored before launch
 double oldGyroBias[3] = {0.0, 0, 0.0}; //actual used gyro biases to ensure no bad data enters after launch
@@ -79,28 +79,28 @@ int baroCount = 0; // current baro count
 double baroSum = 0; // current baro sum
 double values[baroAdjustN]; // array of baro values
 
-double accelMeasurement[3] = {0.0, 0.0, 0.0};
-double correctedAccelQuaternion[4] = {0.0, 0.0, 0.0, 0.0};
+double accelMeasurement[3] = {0.0, 0.0, 0.0}; // raw accel measurements
+double correctedAccelQuaternion[4] = {0.0, 0.0, 0.0, 0.0}; // corrected accel quaternion with gravity removed
 
-double initialOrientation[4] = {0.0, 0.0, 0.0, 0.0};
+double initialOrientation[4] = {0.0, 0.0, 0.0, 0.0}; // initial orientation quaternion
 
-bool armed = false;
-bool pastApogee = false;
-bool launchDetected = false;
-double launchAccelThreshold = 20.0;
-double currentEstimate = 0.0;
-double launchTime = -1.0;
+bool armed = false; // rocket is armed
+bool pastApogee = false; // rocket has passed apogee
+bool launchDetected = false; // launch has been detected
+double launchAccelThreshold = 15.0; // acceleration threshold to detect launch in m/s^2
+double currentEstimate = 0.0; // current estimate of apogee
+double launchTime = -1.0; // time of launch
 
-double maxAlt = 0.0;
+double maxAlt = 0.0; // maximum altitude
 
 // double accelQuaternion[4] = {0, 0, 0, 0};
 
 // put function declarations here:
 
-BLA::Matrix<Nobs> obs;
-KALMAN<Nstate, Nobs> K;
-unsigned long oldKalmanTime;
-unsigned long newKalmanTime;
+BLA::Matrix<Nobs> obs; // observation matrix
+KALMAN<Nstate, Nobs> K; // kalman filter matrix
+unsigned long oldKalmanTime; // old kalman time, used for kalman filtering
+unsigned long newKalmanTime; // new kalman time, used for kalman filtering
 
 Adafruit_BMP3XX bmp;
 
