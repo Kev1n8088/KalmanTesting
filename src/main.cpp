@@ -44,50 +44,56 @@ BNO08x IMU;
 #define m_s 0.1
 #define m_a 0.8
 
-#define gravity 9.81
+#define gravity 9.81 // gravity in m/s^2
 #define gravityOffset 0.0 // compensates for noise
-#define targetAlt 250.0
-#define targetTime 41.0
+#define targetAlt 250.0 // target altitude in meters
+#define targetTime 41.0 // target time in seconds
 
 #define logTime 150.0   // log data every x milliseconds
 #define tareTime 5000.0 // tare every x milliseconds
 
 #define Serialx Serial // change to serial1 for elrs.
 
-#define baroAdjustN 10
+#define baroAdjustN 10 // number of baro values to average
+
+#define apogeeDetectAltDown 2.0 //how much below max alt to detect apogee passed
+#define apogeeDetectVelDown -1.0 //how much negative velocity to detect apogee passed
 
 unsigned long oldGyroTime;
 unsigned long newGyroTime;
-float printTime;
-float biasTime;
+double printTime;
+double biasTime;
 
-float gyroBias[3] = {0.0, 0.0, 0.0};
-float oldGyroBias[3] = {0.0, 0, 0.0};
+double gyroBias[3] = {0.0, 0.0, 0.0}; //stored gyro biases, stored before launch
+double oldGyroBias[3] = {0.0, 0, 0.0}; //actual used gyro biases to ensure no bad data enters after launch
 
-float gyroMeasurement[3] = {0.0, 0.0, 0.0};
-float filteredGyro[3] = {0.0, 0.0, 0.0};
-float orientationQuaternion[4] = {1.0, 0.0, 0.0, 0.0};
+double gyroMeasurement[3] = {0.0, 0.0, 0.0}; // raw gyro measurements
+double filteredGyro[3] = {0.0, 0.0, 0.0}; // filtered gyro measurements adjusted by bias
+double orientationQuaternion[4] = {1.0, 0.0, 0.0, 0.0}; // orientation quaternion
 
-float baroMeaurement = 0.0; // baro measurement in meters adjusted by sealevel HPA
-float baroAdjust = 0.0;     // baro adjustment in meters
+double baroMeaurement = 0.0; // baro measurement in meters adjusted by sealevel HPA
+double baroAdjust = 0.0;     // baro adjustment in meters
 
-int baroCurrent = 0;
-int baroCount = 0;
-float baroSum = 0;
-float values[baroAdjustN];
+int baroCurrent = 0; // current baro index
+int baroCount = 0; // current baro count
+double baroSum = 0; // current baro sum
+double values[baroAdjustN]; // array of baro values
 
-float accelMeasurement[3] = {0.0, 0.0, 0.0};
-float correctedAccelQuaternion[4] = {0.0, 0.0, 0.0, 0.0};
+double accelMeasurement[3] = {0.0, 0.0, 0.0};
+double correctedAccelQuaternion[4] = {0.0, 0.0, 0.0, 0.0};
 
-float initialOrientation[4] = {0.0, 0.0, 0.0, 0.0};
+double initialOrientation[4] = {0.0, 0.0, 0.0, 0.0};
 
 bool armed = false;
 bool pastApogee = false;
 bool launchDetected = false;
-float launchAccelThreshold = 20.0;
-float currentEstimate = 0.0;
+double launchAccelThreshold = 20.0;
+double currentEstimate = 0.0;
+double launchTime = -1.0;
 
-// float accelQuaternion[4] = {0, 0, 0, 0};
+double maxAlt = 0.0;
+
+// double accelQuaternion[4] = {0, 0, 0, 0};
 
 // put function declarations here:
 
@@ -163,19 +169,19 @@ void gyroFilter()
 void gyroQuaternion()
 {
   newGyroTime = micros();
-  float dt = (newGyroTime - oldGyroTime) / 1000000.0;
+  double dt = (newGyroTime - oldGyroTime) / 1000000.0;
   oldGyroTime = newGyroTime;
 
-  float dq[4] = {0.0, 0.0, 0.0, 0.0};
-  float v[3] = {0.0, 0.0, 0.0};
-  float gyroMag = sqrt(filteredGyro[0] * filteredGyro[0] + filteredGyro[1] * filteredGyro[1] + filteredGyro[2] * filteredGyro[2]);
+  double dq[4] = {0.0, 0.0, 0.0, 0.0};
+  double v[3] = {0.0, 0.0, 0.0};
+  double gyroMag = sqrt(filteredGyro[0] * filteredGyro[0] + filteredGyro[1] * filteredGyro[1] + filteredGyro[2] * filteredGyro[2]);
 
   if (gyroMag == 0.0)
   {
     return;
   }
 
-  float theta = gyroMag * dt;
+  double theta = gyroMag * dt;
   v[0] = filteredGyro[0] / gyroMag;
   v[1] = filteredGyro[1] / gyroMag;
   v[2] = filteredGyro[2] / gyroMag;
@@ -188,7 +194,7 @@ void gyroQuaternion()
   orientationQuaternion[2] = orientationQuaternion[0] * dq[2] - orientationQuaternion[1] * dq[3] + orientationQuaternion[2] * dq[0] + orientationQuaternion[3] * dq[1];
   orientationQuaternion[3] = orientationQuaternion[0] * dq[3] + orientationQuaternion[1] * dq[2] - orientationQuaternion[2] * dq[1] + orientationQuaternion[3] * dq[0];
 
-  float mag = sqrt(orientationQuaternion[0] * orientationQuaternion[0] + orientationQuaternion[1] * orientationQuaternion[1] + orientationQuaternion[2] * orientationQuaternion[2] + orientationQuaternion[3] * orientationQuaternion[3]);
+  double mag = sqrt(orientationQuaternion[0] * orientationQuaternion[0] + orientationQuaternion[1] * orientationQuaternion[1] + orientationQuaternion[2] * orientationQuaternion[2] + orientationQuaternion[3] * orientationQuaternion[3]);
   if (mag == 0.0)
   {
     return;
@@ -232,20 +238,20 @@ void getAccelQuaternion()
     accelMeasurement[2] = IMU.getAccelZ();
   }
 
-  float uncorrectedAccelQuaternion[4] = {0, 0, 0, 0};
+  double uncorrectedAccelQuaternion[4] = {0, 0, 0, 0};
   uncorrectedAccelQuaternion[0] = 0;
   uncorrectedAccelQuaternion[1] = accelMeasurement[0];
   uncorrectedAccelQuaternion[2] = accelMeasurement[1];
   uncorrectedAccelQuaternion[3] = accelMeasurement[2];
 
-  float orientationTimesAccel[4] = {0, 0, 0, 0};
+  double orientationTimesAccel[4] = {0, 0, 0, 0};
   orientationTimesAccel[0] = orientationQuaternion[0] * uncorrectedAccelQuaternion[0] - orientationQuaternion[1] * uncorrectedAccelQuaternion[1] - orientationQuaternion[2] * uncorrectedAccelQuaternion[2] - orientationQuaternion[3] * uncorrectedAccelQuaternion[3];
   orientationTimesAccel[1] = orientationQuaternion[0] * uncorrectedAccelQuaternion[1] + orientationQuaternion[1] * uncorrectedAccelQuaternion[0] + orientationQuaternion[2] * uncorrectedAccelQuaternion[3] - orientationQuaternion[3] * uncorrectedAccelQuaternion[2];
   orientationTimesAccel[2] = orientationQuaternion[0] * uncorrectedAccelQuaternion[2] - orientationQuaternion[1] * uncorrectedAccelQuaternion[3] + orientationQuaternion[2] * uncorrectedAccelQuaternion[0] + orientationQuaternion[3] * uncorrectedAccelQuaternion[1];
   orientationTimesAccel[3] = orientationQuaternion[0] * uncorrectedAccelQuaternion[3] + orientationQuaternion[1] * uncorrectedAccelQuaternion[2] - orientationQuaternion[2] * uncorrectedAccelQuaternion[1] + orientationQuaternion[3] * uncorrectedAccelQuaternion[0];
 
-  float inverseOrientation[4] = {0, 0, 0, 0};
-  float orientationMag = sqrt(orientationQuaternion[0] * orientationQuaternion[0] + orientationQuaternion[1] * orientationQuaternion[1] + orientationQuaternion[2] * orientationQuaternion[2] + orientationQuaternion[3] * orientationQuaternion[3]);
+  double inverseOrientation[4] = {0, 0, 0, 0};
+  double orientationMag = sqrt(orientationQuaternion[0] * orientationQuaternion[0] + orientationQuaternion[1] * orientationQuaternion[1] + orientationQuaternion[2] * orientationQuaternion[2] + orientationQuaternion[3] * orientationQuaternion[3]);
   if (orientationMag == 0.0)
   {
     return;
@@ -268,7 +274,7 @@ void getAccelQuaternion()
 // gets baro adjustment for altitude, using a rolling average
 void getBaroAdjustment(){
   if(!armed){
-    float reading = bmp.readAltitude(SEALEVELPRESSURE_HPA);
+    double reading = bmp.readAltitude(SEALEVELPRESSURE_HPA);
     baroSum += reading;
     if (baroCount == baroAdjustN){
       baroSum -= values[baroCurrent];
@@ -380,7 +386,7 @@ void setupKalman()
 void updateKalman()
 {
   newKalmanTime = micros();
-  float dkt = (newKalmanTime - oldKalmanTime) / 1000000.0;
+  double dkt = (newKalmanTime - oldKalmanTime) / 1000000.0;
   oldKalmanTime = newKalmanTime;
 
   K.F = {1.0, dkt, 0.5 * dkt * dkt,
@@ -398,7 +404,6 @@ void updateKalman()
 void runServos()
 {
   // K.x is kalman state. (0) is position, (1) is speed, (2) is acceleration
-
   currentEstimate = -((K.x(1) * K.x(1)) / (K.x(2) - gravity)) + K.x(0);
   if (!pastApogee && launchDetected)
   {
@@ -411,29 +416,47 @@ void runServos()
       Serial.println("Retract Servos ");
     }
   }
-  else if (pastApogee)
+  else if (pastApogee && launchDetected)
   {
-    Serial.println("Retract Servos ");
-    // Change this to also use servos for duration control
+    double landEstimate = (-K.x(0) / K.x(1)) + millis();
+    double landTarget = targetTime * 1000.0 + launchTime;
+
+    if (landEstimate > landTarget)
+    {
+      Serial.println("Retract Servos ");
+    }
+    else
+    {
+      Serial.println("Extend Servos ");
+    }
   }
 }
 
 // updates launchDetected based on raw accelerometer
 void detectLaunch()
 {
-  float accelMag = sqrt(accelMeasurement[0] * accelMeasurement[0] + accelMeasurement[1] * accelMeasurement[1] + accelMeasurement[2] * accelMeasurement[2]);
+  double accelMag = sqrt(accelMeasurement[0] * accelMeasurement[0] + accelMeasurement[1] * accelMeasurement[1] + accelMeasurement[2] * accelMeasurement[2]);
   if (accelMag > launchAccelThreshold && armed)
   {
     launchDetected = true;
-  }
-  if (launchDetected)
-  {
-    if (K.x(1) < 0)
+    if (launchTime == -1.0)
     {
-      pastApogee = true;
+      launchTime = millis();
     }
   }
 }
+
+void detectApogee(){
+  if (maxAlt < K.x(0)){
+    maxAlt = K.x(0);
+  }
+
+  if (maxAlt - K.x(0) > apogeeDetectAltDown && K.x(1) < apogeeDetectVelDown){
+    pastApogee = true;
+  }
+
+}
+
 
 void resetVariables()
 {
@@ -522,6 +545,7 @@ void serialComms()
   else
   {
     launchDetected = false;
+    launchTime = -1.0;
     pastApogee = false;
     Serial.println("Not armed!");
   }
@@ -601,6 +625,9 @@ void loop()
           }
           delay(1);
         }
+      }else{
+        runServos();
+        detectApogee();
       }
     }
   }else{
