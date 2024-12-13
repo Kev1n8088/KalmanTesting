@@ -24,6 +24,8 @@ using namespace BLA;
 // #define BNO08X_ADDR 0x4B  // SparkFun BNO08x Breakout (Qwiic) defaults to 0x4B
 #define BNO08X_ADDR 0x4A // Alternate address if ADR jumper is closed
 
+#define BMP3XX_ADDR 0x76 
+
 BNO08x IMU;
 
 #define SEALEVELPRESSURE_HPA (1013.25)
@@ -52,6 +54,8 @@ BNO08x IMU;
 
 #define Serialx Serial // change to serial1 for elrs.
 
+#define baroAdjustN 10
+
 unsigned long oldGyroTime;
 unsigned long newGyroTime;
 float printTime;
@@ -65,6 +69,12 @@ float filteredGyro[3] = {0.0, 0.0, 0.0};
 float orientationQuaternion[4] = {1.0, 0.0, 0.0, 0.0};
 
 float baroMeaurement = 0.0; // baro measurement in meters adjusted by sealevel HPA
+float baroAdjust = 0.0;     // baro adjustment in meters
+
+int baroCurrent = 0;
+int baroCount = 0;
+float baroSum = 0;
+float values[baroAdjustN];
 
 float accelMeasurement[3] = {0.0, 0.0, 0.0};
 float correctedAccelQuaternion[4] = {0.0, 0.0, 0.0, 0.0};
@@ -192,7 +202,7 @@ void gyroQuaternion()
 // updates baroMeasurement with new baroMeasurement from sensor
 void getBaro()
 {
-  baroMeaurement = bmp.readAltitude(SEALEVELPRESSURE_HPA);
+  baroMeaurement = bmp.readAltitude(SEALEVELPRESSURE_HPA) - baroAdjust;
 }
 
 //  USE ONLY BEFORE LAUNCH! Sets the initial orientation of the rocket. Must be real time, called up until ARM signal recieved.
@@ -255,6 +265,30 @@ void getAccelQuaternion()
   correctedAccelQuaternion[3] += gravityOffset;
 }
 
+// gets baro adjustment for altitude, using a rolling average
+void getBaroAdjustment(){
+  if(!armed){
+    float reading = bmp.readAltitude(SEALEVELPRESSURE_HPA);
+    baroSum += reading;
+    if (baroCount == baroAdjustN){
+      baroSum -= values[baroCurrent];
+    }
+
+    values[baroCurrent] = reading;
+    
+    if (++baroCurrent >= baroAdjustN){
+      baroCurrent = 0;
+    }
+
+    if (baroCount < baroAdjustN){
+      baroCount++;
+    }
+
+    baroAdjust = baroSum / baroCount;
+
+  }
+}
+
 // sets the reports that the IMU should send
 void setReports(bool enableRotationVector)
 {
@@ -300,23 +334,25 @@ void printData()
   // Serial.print(", ");
   // Serial.println(orientationQuaternion[3]);
 
-  Serial.print("Gyro: ");
-  Serial.print(orientationQuaternion[0]);
-  Serial.print(", ");
-  Serial.print(orientationQuaternion[1]);
-  Serial.print(", ");
-  Serial.print(orientationQuaternion[2]);
-  Serial.print(", ");
-  Serial.println(orientationQuaternion[3]);
+  // Serial.print("Gyro: ");
+  // Serial.print(orientationQuaternion[0]);
+  // Serial.print(", ");
+  // Serial.print(orientationQuaternion[1]);
+  // Serial.print(", ");
+  // Serial.print(orientationQuaternion[2]);
+  // Serial.print(", ");
+  // Serial.println(orientationQuaternion[3]);
 
-  Serial.print("Quaternion: ");
-  Serial.print(correctedAccelQuaternion[0]);
-  Serial.print(", ");
-  Serial.print(correctedAccelQuaternion[1]);
-  Serial.print(", ");
-  Serial.print(correctedAccelQuaternion[2]);
-  Serial.print(", ");
-  Serial.println(correctedAccelQuaternion[3]);
+  // Serial.print("Quaternion: ");
+  // Serial.print(correctedAccelQuaternion[0]);
+  // Serial.print(", ");
+  // Serial.print(correctedAccelQuaternion[1]);
+  // Serial.print(", ");
+  // Serial.print(correctedAccelQuaternion[2]);
+  // Serial.print(", ");
+  // Serial.println(correctedAccelQuaternion[3]);
+
+  Serial.println(baroMeaurement);
 }
 
 // sets up kalman filter model
@@ -509,19 +545,19 @@ void setup()
       ;
   }
 
-  // if (!bmp.begin_I2C())
-  // { // hardware I2C mode, can pass in address & alt Wire
-  //   // if (! bmp.begin_SPI(BMP_CS)) {  // hardware SPI mode
-  //   // if (! bmp.begin_SPI(BMP_CS, BMP_SCK, BMP_MISO, BMP_MOSI)) {  // software SPI mode
-  //   Serial.println("Could not find a valid BMP3 sensor, check wiring!");ff
-  //   while (1)
-  //     ;
-  // }
+  if (!bmp.begin_I2C(BMP3XX_ADDR))
+  { // hardware I2C mode, can pass in address & alt Wire
+    // if (! bmp.begin_SPI(BMP_CS)) {  // hardware SPI mode
+    // if (! bmp.begin_SPI(BMP_CS, BMP_SCK, BMP_MISO, BMP_MOSI)) {  // software SPI mode
+    Serial.println("Could not find a valid BMP3 sensor, check wiring!");
+    while (1)
+      ;
+  }
 
-  // bmp.setTemperatureOversampling(BMP3_OVERSAMPLING_8X);
-  // bmp.setPressureOversampling(BMP3_OVERSAMPLING_4X);
-  // bmp.setIIRFilterCoeff(BMP3_IIR_FILTER_COEFF_3);
-  // bmp.setOutputDataRate(BMP3_ODR_50_HZ);
+  bmp.setTemperatureOversampling(BMP3_OVERSAMPLING_8X);
+  bmp.setPressureOversampling(BMP3_OVERSAMPLING_4X);
+  bmp.setIIRFilterCoeff(BMP3_IIR_FILTER_COEFF_3);
+  bmp.setOutputDataRate(BMP3_ODR_50_HZ);
 }
 
 void loop()
@@ -534,10 +570,10 @@ void loop()
   if (armed)
   {
 
-    // if (bmp.performReading())
-    // {
-    //   getBaro();
-    // }
+    if (bmp.performReading())
+    {
+      getBaro();
+    }
 
     if (IMU.getSensorEvent() == true)
     {
@@ -545,7 +581,7 @@ void loop()
       gyroFilter();
       gyroQuaternion();
       getAccelQuaternion();
-      // updateKalman();
+      updateKalman();
       detectLaunch();
     }
 
@@ -566,6 +602,11 @@ void loop()
           delay(1);
         }
       }
+    }
+  }else{
+    if (bmp.performReading())
+    {
+    getBaroAdjustment();
     }
   }
 }
