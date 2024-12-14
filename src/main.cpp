@@ -431,7 +431,7 @@ void runServos()
       else
       {
         servoPos = constrain(servoPos - SERVO_STEP, SERVO_RETRACT, SERVO_DEPLOY);
-        Serial.println("Retract Servos ");
+        //Serial.println("Retract Servos ");
       }
     }
     else
