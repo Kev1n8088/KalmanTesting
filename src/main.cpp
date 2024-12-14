@@ -6,6 +6,7 @@
 
 #include <Kalman.h>
 #include <math.h> // Include math library for trigonometric functions
+#include <ESP32Servo.h> // Include servo library for controlling servo
 
 #include "driver/uart.h"
 #include "esp_log.h"
@@ -44,56 +45,70 @@ BNO08x IMU;
 #define m_s 0.1
 #define m_a 0.8
 
-#define gravity 9.81 // gravity in m/s^2
-#define gravityOffset 0.0 // compensates for noise
-#define targetAlt 250.0 // target altitude in meters
-#define targetTime 41.0 // target time in seconds
+#define GRAVITY 9.81 // gravity in m/s^2
+#define GRAVITY_OFFSET 0.0 // compensates for noise
+#define TARGET_ALT 250.0 // target altitude in meters
+#define TARGET_TIME 41.0 // target time in seconds
 
-#define logTime 150.0   // log data every x milliseconds
-#define tareTime 5000.0 // tare every x milliseconds
+#define LOG_TIME 150.0   // log data every x milliseconds
+#define TARE_TIME 5000.0 // tare gyro every x milliseconds
 
 #define Serialx Serial // change to serial1 for elrs.
 
-#define baroAdjustN 10 // number of baro values to average
+#define BARO_ADJUST_N 10 // number of baro values to average
 
-#define apogeeDetectAltDown 2.0 //how much below max alt to detect apogee passed
-#define apogeeDetectVelDown -1.0 //how much negative velocity to detect apogee passed
+#define APOGEE_DETECT_ALT_DOWN 2.0 //how much below max alt to detect apogee passed
+#define APOGEE_DETECT_VEL_DOWN -1.0 //how much negative velocity to detect apogee passed
+
+#define SERVO_PIN A1 // servo pin
+#define SERVO_MIN 1000 // servo min pulse width
+#define SERVO_MAX 2000 // servo max pulse width
+
+#define SERVO_RETRACT 20 // servo retract position
+#define SERVO_DEPLOY 50 // servo deploy position
+#define SERVO_STEP 1 // servo step size
+
+#define BAT_PIN A3 // battery voltage pin
+#define MAX_VOLT 10.321 // voltage divider max voltage, analog in maxes out at 4095 so map to that
 
 unsigned long oldGyroTime; // old gyro time, used for gyro integration
 unsigned long newGyroTime; // new gyro time, used for gyro integration
-double printTime; // time of last printing for debugging
-double biasTime; // time of last added gyro biases
+unsigned long printTime; // time of last printing for debugging
+unsigned long biasTime; // time of last added gyro biases
 
-double gyroBias[3] = {0.0, 0.0, 0.0}; //stored gyro biases, stored before launch
-double oldGyroBias[3] = {0.0, 0, 0.0}; //actual used gyro biases to ensure no bad data enters after launch
+float gyroBias[3] = {0.0, 0.0, 0.0}; //stored gyro biases, stored before launch
+float oldGyroBias[3] = {0.0, 0, 0.0}; //actual used gyro biases to ensure no bad data enters after launch
 
-double gyroMeasurement[3] = {0.0, 0.0, 0.0}; // raw gyro measurements
-double filteredGyro[3] = {0.0, 0.0, 0.0}; // filtered gyro measurements adjusted by bias
-double orientationQuaternion[4] = {1.0, 0.0, 0.0, 0.0}; // orientation quaternion
+float gyroMeasurement[3] = {0.0, 0.0, 0.0}; // raw gyro measurements
+float filteredGyro[3] = {0.0, 0.0, 0.0}; // filtered gyro measurements adjusted by bias
+float orientationQuaternion[4] = {1.0, 0.0, 0.0, 0.0}; // orientation quaternion
 
-double baroMeaurement = 0.0; // baro measurement in meters adjusted by sealevel HPA
-double baroAdjust = 0.0;     // baro adjustment in meters
+float baroMeaurement = 0.0; // baro measurement in meters adjusted by sealevel HPA
+float baroAdjust = 0.0;     // baro adjustment in meters
 
 int baroCurrent = 0; // current baro index
 int baroCount = 0; // current baro count
-double baroSum = 0; // current baro sum
-double values[baroAdjustN]; // array of baro values
+float baroSum = 0; // current baro sum
+float values[BARO_ADJUST_N]; // array of baro values
 
-double accelMeasurement[3] = {0.0, 0.0, 0.0}; // raw accel measurements
-double correctedAccelQuaternion[4] = {0.0, 0.0, 0.0, 0.0}; // corrected accel quaternion with gravity removed
+float accelMeasurement[3] = {0.0, 0.0, 0.0}; // raw accel measurements
+float correctedAccelQuaternion[4] = {0.0, 0.0, 0.0, 0.0}; // corrected accel quaternion with gravity removed
 
-double initialOrientation[4] = {0.0, 0.0, 0.0, 0.0}; // initial orientation quaternion
+float initialOrientation[4] = {0.0, 0.0, 0.0, 0.0}; // initial orientation quaternion
 
 bool armed = false; // rocket is armed
 bool pastApogee = false; // rocket has passed apogee
 bool launchDetected = false; // launch has been detected
-double launchAccelThreshold = 15.0; // acceleration threshold to detect launch in m/s^2
-double currentEstimate = 0.0; // current estimate of apogee
-double launchTime = -1.0; // time of launch
+float launchAccelThreshold = 15.0; // acceleration threshold to detect launch in m/s^2
+float currentEstimate = 0.0; // current estimate of apogee
+float launchTime = -1.0; // time of launch
 
-double maxAlt = 0.0; // maximum altitude
+float maxAlt = 0.0; // maximum altitude
 
-// double accelQuaternion[4] = {0, 0, 0, 0};
+Servo servo; // servo object
+int servoPos = SERVO_RETRACT; // servo position
+
+// float accelQuaternion[4] = {0, 0, 0, 0};
 
 // put function declarations here:
 
@@ -169,19 +184,19 @@ void gyroFilter()
 void gyroQuaternion()
 {
   newGyroTime = micros();
-  double dt = (newGyroTime - oldGyroTime) / 1000000.0;
+  float dt = (newGyroTime - oldGyroTime) / 1000000.0;
   oldGyroTime = newGyroTime;
 
-  double dq[4] = {0.0, 0.0, 0.0, 0.0};
-  double v[3] = {0.0, 0.0, 0.0};
-  double gyroMag = sqrt(filteredGyro[0] * filteredGyro[0] + filteredGyro[1] * filteredGyro[1] + filteredGyro[2] * filteredGyro[2]);
+  float dq[4] = {0.0, 0.0, 0.0, 0.0};
+  float v[3] = {0.0, 0.0, 0.0};
+  float gyroMag = sqrt(filteredGyro[0] * filteredGyro[0] + filteredGyro[1] * filteredGyro[1] + filteredGyro[2] * filteredGyro[2]);
 
   if (gyroMag == 0.0)
   {
     return;
   }
 
-  double theta = gyroMag * dt;
+  float theta = gyroMag * dt;
   v[0] = filteredGyro[0] / gyroMag;
   v[1] = filteredGyro[1] / gyroMag;
   v[2] = filteredGyro[2] / gyroMag;
@@ -194,7 +209,7 @@ void gyroQuaternion()
   orientationQuaternion[2] = orientationQuaternion[0] * dq[2] - orientationQuaternion[1] * dq[3] + orientationQuaternion[2] * dq[0] + orientationQuaternion[3] * dq[1];
   orientationQuaternion[3] = orientationQuaternion[0] * dq[3] + orientationQuaternion[1] * dq[2] - orientationQuaternion[2] * dq[1] + orientationQuaternion[3] * dq[0];
 
-  double mag = sqrt(orientationQuaternion[0] * orientationQuaternion[0] + orientationQuaternion[1] * orientationQuaternion[1] + orientationQuaternion[2] * orientationQuaternion[2] + orientationQuaternion[3] * orientationQuaternion[3]);
+  float mag = sqrt(orientationQuaternion[0] * orientationQuaternion[0] + orientationQuaternion[1] * orientationQuaternion[1] + orientationQuaternion[2] * orientationQuaternion[2] + orientationQuaternion[3] * orientationQuaternion[3]);
   if (mag == 0.0)
   {
     return;
@@ -238,20 +253,20 @@ void getAccelQuaternion()
     accelMeasurement[2] = IMU.getAccelZ();
   }
 
-  double uncorrectedAccelQuaternion[4] = {0, 0, 0, 0};
+  float uncorrectedAccelQuaternion[4] = {0, 0, 0, 0};
   uncorrectedAccelQuaternion[0] = 0;
   uncorrectedAccelQuaternion[1] = accelMeasurement[0];
   uncorrectedAccelQuaternion[2] = accelMeasurement[1];
   uncorrectedAccelQuaternion[3] = accelMeasurement[2];
 
-  double orientationTimesAccel[4] = {0, 0, 0, 0};
+  float orientationTimesAccel[4] = {0, 0, 0, 0};
   orientationTimesAccel[0] = orientationQuaternion[0] * uncorrectedAccelQuaternion[0] - orientationQuaternion[1] * uncorrectedAccelQuaternion[1] - orientationQuaternion[2] * uncorrectedAccelQuaternion[2] - orientationQuaternion[3] * uncorrectedAccelQuaternion[3];
   orientationTimesAccel[1] = orientationQuaternion[0] * uncorrectedAccelQuaternion[1] + orientationQuaternion[1] * uncorrectedAccelQuaternion[0] + orientationQuaternion[2] * uncorrectedAccelQuaternion[3] - orientationQuaternion[3] * uncorrectedAccelQuaternion[2];
   orientationTimesAccel[2] = orientationQuaternion[0] * uncorrectedAccelQuaternion[2] - orientationQuaternion[1] * uncorrectedAccelQuaternion[3] + orientationQuaternion[2] * uncorrectedAccelQuaternion[0] + orientationQuaternion[3] * uncorrectedAccelQuaternion[1];
   orientationTimesAccel[3] = orientationQuaternion[0] * uncorrectedAccelQuaternion[3] + orientationQuaternion[1] * uncorrectedAccelQuaternion[2] - orientationQuaternion[2] * uncorrectedAccelQuaternion[1] + orientationQuaternion[3] * uncorrectedAccelQuaternion[0];
 
-  double inverseOrientation[4] = {0, 0, 0, 0};
-  double orientationMag = sqrt(orientationQuaternion[0] * orientationQuaternion[0] + orientationQuaternion[1] * orientationQuaternion[1] + orientationQuaternion[2] * orientationQuaternion[2] + orientationQuaternion[3] * orientationQuaternion[3]);
+  float inverseOrientation[4] = {0, 0, 0, 0};
+  float orientationMag = sqrt(orientationQuaternion[0] * orientationQuaternion[0] + orientationQuaternion[1] * orientationQuaternion[1] + orientationQuaternion[2] * orientationQuaternion[2] + orientationQuaternion[3] * orientationQuaternion[3]);
   if (orientationMag == 0.0)
   {
     return;
@@ -267,26 +282,26 @@ void getAccelQuaternion()
   correctedAccelQuaternion[3] = orientationTimesAccel[0] * inverseOrientation[3] + orientationTimesAccel[1] * inverseOrientation[2] - orientationTimesAccel[2] * inverseOrientation[1] + orientationTimesAccel[3] * inverseOrientation[0];
 
   // correct for gravity
-  correctedAccelQuaternion[3] -= gravity;
-  correctedAccelQuaternion[3] += gravityOffset;
+  correctedAccelQuaternion[3] -= GRAVITY;
+  correctedAccelQuaternion[3] += GRAVITY_OFFSET;
 }
 
 // gets baro adjustment for altitude, using a rolling average
 void getBaroAdjustment(){
   if(!armed){
-    double reading = bmp.readAltitude(SEALEVELPRESSURE_HPA);
+    float reading = bmp.readAltitude(SEALEVELPRESSURE_HPA);
     baroSum += reading;
-    if (baroCount == baroAdjustN){
+    if (baroCount == BARO_ADJUST_N){
       baroSum -= values[baroCurrent];
     }
 
     values[baroCurrent] = reading;
     
-    if (++baroCurrent >= baroAdjustN){
+    if (++baroCurrent >= BARO_ADJUST_N){
       baroCurrent = 0;
     }
 
-    if (baroCount < baroAdjustN){
+    if (baroCount < BARO_ADJUST_N){
       baroCount++;
     }
 
@@ -386,7 +401,7 @@ void setupKalman()
 void updateKalman()
 {
   newKalmanTime = micros();
-  double dkt = (newKalmanTime - oldKalmanTime) / 1000000.0;
+  float dkt = (newKalmanTime - oldKalmanTime) / 1000000.0;
   oldKalmanTime = newKalmanTime;
 
   K.F = {1.0, dkt, 0.5 * dkt * dkt,
@@ -404,38 +419,44 @@ void updateKalman()
 void runServos()
 {
   // K.x is kalman state. (0) is position, (1) is speed, (2) is acceleration
-  currentEstimate = -((K.x(1) * K.x(1)) / (K.x(2) - gravity)) + K.x(0);
-  if (!pastApogee && launchDetected)
-  {
-    if (currentEstimate > targetAlt)
+  currentEstimate = -((K.x(1) * K.x(1)) / (K.x(2) - GRAVITY)) + K.x(0);
+  if(launchDetected){
+    if (!pastApogee)
     {
-      Serial.println("Extend Servos ");
+      if (currentEstimate > TARGET_ALT)
+      {
+        servoPos = constrain(servoPos + SERVO_STEP, SERVO_RETRACT, SERVO_DEPLOY);
+        //Serial.println("Extend Servos ");
+      }
+      else
+      {
+        servoPos = constrain(servoPos - SERVO_STEP, SERVO_RETRACT, SERVO_DEPLOY);
+        Serial.println("Retract Servos ");
+      }
     }
     else
     {
-      Serial.println("Retract Servos ");
-    }
-  }
-  else if (pastApogee && launchDetected)
-  {
-    double landEstimate = (-K.x(0) / K.x(1)) + millis();
-    double landTarget = targetTime * 1000.0 + launchTime;
+      float landEstimate = (-K.x(0) / K.x(1)) + millis();
+      float landTarget = TARGET_TIME * 1000.0 + launchTime;
 
-    if (landEstimate > landTarget)
-    {
-      Serial.println("Retract Servos ");
+      if (landEstimate > landTarget)
+      {
+        servoPos = constrain(servoPos - SERVO_STEP, SERVO_RETRACT, SERVO_DEPLOY);
+      }
+      else
+      {
+        servoPos = constrain(servoPos + SERVO_STEP, SERVO_RETRACT, SERVO_DEPLOY);
+      }
     }
-    else
-    {
-      Serial.println("Extend Servos ");
-    }
+
+    servo.write(servoPos);
   }
 }
 
 // updates launchDetected based on raw accelerometer
 void detectLaunch()
 {
-  double accelMag = sqrt(accelMeasurement[0] * accelMeasurement[0] + accelMeasurement[1] * accelMeasurement[1] + accelMeasurement[2] * accelMeasurement[2]);
+  float accelMag = sqrt(accelMeasurement[0] * accelMeasurement[0] + accelMeasurement[1] * accelMeasurement[1] + accelMeasurement[2] * accelMeasurement[2]);
   if (accelMag > launchAccelThreshold && armed)
   {
     launchDetected = true;
@@ -451,7 +472,7 @@ void detectApogee(){
     maxAlt = K.x(0);
   }
 
-  if (maxAlt - K.x(0) > apogeeDetectAltDown && K.x(1) < apogeeDetectVelDown){
+  if (maxAlt - K.x(0) > APOGEE_DETECT_ALT_DOWN && K.x(1) < APOGEE_DETECT_VEL_DOWN){
     pastApogee = true;
   }
 
@@ -551,11 +572,27 @@ void serialComms()
   }
 }
 
+float getBatteryVoltage()
+{
+  int raw = analogRead(BAT_PIN);
+  return (raw / 4095.0) * MAX_VOLT;
+}
+
 void setup()
 {
   // put your setup code here, to run once:
   Serial.begin(115200);
   Serial1.begin(14400);
+
+  pinMode(BAT_PIN, INPUT);
+  pinMode(SERVO_PIN, OUTPUT);
+
+	ESP32PWM::allocateTimer(0);
+	ESP32PWM::allocateTimer(1);
+	ESP32PWM::allocateTimer(2);
+	ESP32PWM::allocateTimer(3);
+	servo.setPeriodHertz(50);    // standard 50 hz servo
+	servo.attach(SERVO_PIN, SERVO_MIN, SERVO_MAX); // attaches the servo on pin 18 to the servo object
 
   while (!Serial)
     delay(10); // will pause Zero, Leonardo, etc until serial console opens
@@ -586,7 +623,7 @@ void setup()
 
 void loop()
 {
-  if (millis() - printTime > logTime)
+  if (millis() - printTime > LOG_TIME)
   {
     serialComms();
     printTime = millis();
@@ -611,7 +648,7 @@ void loop()
 
     if (!launchDetected)
     {
-      if (millis() - biasTime > tareTime)
+      if (millis() - biasTime > TARE_TIME)
       {
 
         IMU.getSensorEvent();
