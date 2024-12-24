@@ -428,7 +428,7 @@ void updateKalman()
 void runServos()
 {
   // K.x is kalman state. (0) is position, (1) is speed, (2) is acceleration
-  currentEstimate = -((K.x(1) * K.x(1)) / (K.x(2) - 2 * GRAVITY)) + K.x(0);
+  currentEstimate = -((K.x(1) * K.x(1)) / (K.x(2) - GRAVITY)) + K.x(0);
   if(launchDetected){
     if (!pastApogee)
     {
