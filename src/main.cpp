@@ -66,6 +66,7 @@ BNO08x IMU;
 
 #define SERVO_RETRACT 20 // servo retract position
 #define SERVO_DEPLOY 50 // servo deploy position
+#define SERVO_LAUNCH 25 // servo launch position
 #define SERVO_STEP 1 // servo step size
 
 #define BAT_PIN A3 // battery voltage pin
@@ -366,14 +367,22 @@ void printData()
 
   // Serial.print("Quaternion: ");
   // Serial.print(correctedAccelQuaternion[0]);
-  // Serial.print(", ");
+  // Serial.print(", "); 
   // Serial.print(correctedAccelQuaternion[1]);
   // Serial.print(", ");
   // Serial.print(correctedAccelQuaternion[2]);
   // Serial.print(", ");
   // Serial.println(correctedAccelQuaternion[3]);
 
-  Serial.println(baroMeaurement);
+  //Serial.println(baroMeaurement);
+  Serial.print(baroMeaurement);
+  Serial.print(", ");
+  Serial.print(K.x(0));
+  Serial.print(", ");
+  Serial.print(K.x(1));
+  Serial.print(", ");
+  Serial.println(K.x(2));
+
 }
 
 // sets up kalman filter model
@@ -419,11 +428,13 @@ void updateKalman()
 void runServos()
 {
   // K.x is kalman state. (0) is position, (1) is speed, (2) is acceleration
-  currentEstimate = -((K.x(1) * K.x(1)) / (K.x(2) - GRAVITY)) + K.x(0);
+  currentEstimate = -((K.x(1) * K.x(1)) / (K.x(2) - 2 * GRAVITY)) + K.x(0);
   if(launchDetected){
     if (!pastApogee)
     {
-      if (currentEstimate > TARGET_ALT)
+      if (K.x(2) > 0.0){
+        servoPos = SERVO_LAUNCH;
+      }else if (currentEstimate > TARGET_ALT)
       {
         servoPos = constrain(servoPos + SERVO_STEP, SERVO_RETRACT, SERVO_DEPLOY);
         //Serial.println("Extend Servos ");
@@ -449,8 +460,11 @@ void runServos()
       }
     }
 
+    
+  }else{
+      servoPos = SERVO_LAUNCH;
+    }
     servo.write(servoPos);
-  }
 }
 
 // updates launchDetected based on raw accelerometer
